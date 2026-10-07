@@ -1,10 +1,10 @@
 import 'package:digital_khata/app.dart';
-import 'package:digital_khata/firebase_options.dart';
-import 'package:firebase_core/firebase_core.dart';
+import 'package:digital_khata/services/local_database.dart';
 import 'package:flutter/material.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await LocalDatabase.instance.initialize();
+  await AuthService.instance.restoreSession();
   runApp(const MyApp());
 }

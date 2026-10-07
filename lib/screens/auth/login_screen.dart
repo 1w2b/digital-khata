@@ -1,7 +1,6 @@
 import 'package:digital_khata/components/my_button.dart';
 import 'package:digital_khata/components/my_text_field.dart';
-import 'package:digital_khata/helper/helper_function.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:digital_khata/services/local_database.dart';
 import 'package:flutter/material.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -22,32 +21,17 @@ class _LoginScreenState extends State<LoginScreen> {
   //text controller
   final TextEditingController emailcontroller = TextEditingController();
   final TextEditingController passwordcontroller = TextEditingController();
+  bool _loading = false;
 
   //login method
-  void loginUser() async {
-    // show loading circle
-    if (!mounted) return; // ensure widget still exists before showing dialog
-    showDialog(
-      context: context,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
+  Future<void> loginUser() async {
+    setState(() => _loading = true);
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: emailcontroller.text,
-        password: passwordcontroller.text,
-      );
-
-      // pop the loading circle safely
-      if (!mounted) return;
-      Navigator.pop(context);
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-
-      // show error message safely
-      if (!mounted) return;
-      displayMessageToUser(e.code, context);
+      await AuthService.instance.signIn(email: emailcontroller.text, password: passwordcontroller.text);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))));
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -71,7 +55,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 //
                 Text(
-                  'Digital Khata',
+                  'Pak Khata',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w200),
                 ),
 
@@ -107,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 SizedBox(height: 25),
 
                 //sign in button
-                MyButton(text: "Login", onTap: loginUser),
+                _loading ? const CircularProgressIndicator() : MyButton(text: "Login", onTap: loginUser),
 
                 SizedBox(height: 15),
 

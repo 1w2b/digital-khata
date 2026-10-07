@@ -1,5 +1,4 @@
-import 'package:digital_khata/components/my_button.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:digital_khata/services/local_database.dart';
 import 'package:flutter/material.dart';
 
 // to display the message to user
@@ -33,12 +32,12 @@ void logout(BuildContext context) async {
             },
             child: const Text("Cancel"),
           ),
-          MyButton(
-            text: "Logout",
-            onTap: () async {
+          TextButton(
+            onPressed: () async {
               Navigator.of(context).pop();
-              await FirebaseAuth.instance.signOut();
+              await AuthService.instance.signOut();
             },
+            child: const Text("Logout"),
           ),
         ],
       );

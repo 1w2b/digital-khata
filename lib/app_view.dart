@@ -11,14 +11,14 @@ class MyAppView extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: "Digital Khata",
+      title: "Pak Khata",
       theme: ThemeData(
         colorScheme: ColorScheme.light(
           surface: Colors.grey.shade100,
           onSurface: Colors.black,
-          primary: Color(0xFF4A90E2),
-          secondary: Color(0xFF1ABC9C),
-          tertiary: Color(0xFFBDC3C7),
+          primary: const Color(0xFF087F5B),
+          secondary: const Color(0xFF20A779),
+          tertiary: const Color(0xFF72C79E),
           outline: Colors.grey,
         ),
       ),

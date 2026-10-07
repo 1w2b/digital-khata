@@ -1,8 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:digital_khata/components/my_button.dart';
 import 'package:digital_khata/components/my_text_field.dart';
-import 'package:digital_khata/helper/helper_function.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:digital_khata/services/local_database.dart';
 import 'package:flutter/material.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -29,57 +27,21 @@ class _SignupScreenState extends State<SignupScreen> {
 
   final TextEditingController confirmpasswordcontroller =
       TextEditingController();
+  bool _loading = false;
 
   //register method
   Future<void> registerUser() async {
-    if (!mounted) return; // ensure widget is still alive
-    showDialog(
-      context: context,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    // check if passwords match
     if (passwordcontroller.text != confirmpasswordcontroller.text) {
-      if (!mounted) return;
-      Navigator.pop(context);
-
-      if (!mounted) return;
-      displayMessageToUser("Passwords don't match", context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Passwords don't match.")));
       return;
     }
-
+    setState(() => _loading = true);
     try {
-      // create user
-      UserCredential userCredential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
-            email: emailcontroller.text,
-            password: passwordcontroller.text,
-          );
-
-      // create Firestore user doc
-      createUserDocument(userCredential);
-
-      if (!mounted) return;
-      Navigator.pop(context);
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-
-      if (!mounted) return;
-      displayMessageToUser(e.code, context);
-    }
-  }
-
-  //create method to collect user data into firebase
-  Future<void> createUserDocument(UserCredential? userCredential) async {
-    if (userCredential != null && userCredential.user != null) {
-      await FirebaseFirestore.instance
-          .collection("Users")
-          .doc(userCredential.user!.email)
-          .set({
-            'email': userCredential.user!.email,
-            'username': usernamecontroller.text,
-          });
+      await AuthService.instance.signUp(name: usernamecontroller.text, email: emailcontroller.text, password: passwordcontroller.text);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))));
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -103,7 +65,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
                 //
                 Text(
-                  'Digital Khata',
+                  'Pak Khata',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w200),
                 ),
 
@@ -138,7 +100,7 @@ class _SignupScreenState extends State<SignupScreen> {
                 SizedBox(height: 25),
 
                 //sign in button
-                MyButton(text: "Sign Up", onTap: registerUser),
+                _loading ? const CircularProgressIndicator() : MyButton(text: "Create account", onTap: registerUser),
 
                 SizedBox(height: 15),
 

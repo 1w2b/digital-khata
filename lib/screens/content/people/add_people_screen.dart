@@ -1,7 +1,4 @@
-import 'dart:math';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:digital_khata/components/my_button.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:digital_khata/services/local_database.dart';
 import 'package:flutter/material.dart';
 
 class AddPeopleScreen extends StatefulWidget {
@@ -12,87 +9,50 @@ class AddPeopleScreen extends StatefulWidget {
 }
 
 class _AddPeopleScreenState extends State<AddPeopleScreen> {
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
-  bool _isLoading = false;
+  final _name = TextEditingController();
+  final _phone = TextEditingController();
+  bool _saving = false;
 
-  // Generate a random 6-digit number
-  String generateUniqueId() {
-    final random = Random();
-    return (100000 + random.nextInt(900000)).toString();
+  @override
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    super.dispose();
   }
 
-  Future<void> savePerson() async {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _isLoading = true);
-
+    setState(() => _saving = true);
     try {
-      final id = generateUniqueId();
-      await FirebaseFirestore.instance.collection('people').add({
-        'name': _nameController.text.trim(),
-        'phone': _phoneController.text.trim(),
-        'uniqueId': id,
-        'createdBy': FirebaseAuth.instance.currentUser!.email,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Person added successfully!')));
-
-      _nameController.clear();
-      _phoneController.clear();
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to add person: $e')));
+      final person = await DatabaseService().addPerson(name: _name.text, phone: _phone.text);
+      if (!mounted) return;
+      await showDialog<void>(context: context, builder: (context) => AlertDialog(
+        title: const Text('Customer added'),
+        content: SelectableText('${person.name} can view their khata with this access code:\n\n${person.uniqueId}\n\nShare it privately with your customer.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Done'))],
+      ));
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString().replaceFirst('Bad state: ', ''))));
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Add People')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    value == null || value.isEmpty ? 'Enter name' : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                maxLength: 10,
-                controller: _phoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Phone Number',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.phone,
-                validator: (value) => value == null || value.isEmpty
-                    ? 'Enter phone number'
-                    : null,
-              ),
-              const SizedBox(height: 24),
-              _isLoading
-                  ? const CircularProgressIndicator()
-                  : MyButton(text: "Add Person", onTap: savePerson),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Add customer')),
+    body: Form(key: _formKey, child: ListView(padding: const EdgeInsets.all(20), children: [
+      const Icon(Icons.person_add_alt_1, size: 72, color: Color(0xFF087F5B)),
+      const SizedBox(height: 16),
+      TextFormField(controller: _name, textCapitalization: TextCapitalization.words, decoration: const InputDecoration(labelText: 'Customer name', border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)), validator: (value) => value == null || value.trim().isEmpty ? 'Enter a customer name' : null),
+      const SizedBox(height: 16),
+      TextFormField(controller: _phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Pakistani mobile number', hintText: '03XX XXXXXXX', border: OutlineInputBorder(), prefixIcon: Icon(Icons.phone)), validator: (value) => value == null || value.trim().isEmpty ? 'Enter a phone number' : null),
+      const SizedBox(height: 24),
+      FilledButton.icon(onPressed: _saving ? null : _save, icon: _saving ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save), label: const Text('Save customer')),
+      const SizedBox(height: 12),
+      const Text('A private access code is generated so your customer can view their ledger.', textAlign: TextAlign.center),
+    ])),
+  );
 }

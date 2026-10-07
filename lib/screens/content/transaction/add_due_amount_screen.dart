@@ -1,366 +1,70 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:digital_khata/components/my_button.dart';
-import 'package:digital_khata/components/my_text_field.dart';
-import 'package:digital_khata/services/services.dart';
+import 'package:digital_khata/helper/pkr.dart';
+import 'package:digital_khata/services/local_database.dart';
 import 'package:flutter/material.dart';
 
 class AddDueAmountScreen extends StatefulWidget {
-  final String personId;
+  final int personId;
   final String personName;
-
-  const AddDueAmountScreen({
-    super.key,
-    required this.personId,
-    required this.personName,
-  });
-
+  const AddDueAmountScreen({super.key, required this.personId, required this.personName});
   @override
   State<AddDueAmountScreen> createState() => _AddDueAmountScreenState();
 }
 
 class _AddDueAmountScreenState extends State<AddDueAmountScreen> {
-  final DatabaseService _databaseService = DatabaseService();
-  final TextEditingController itemController = TextEditingController();
-  final TextEditingController priceController = TextEditingController();
-  final TextEditingController paymentController = TextEditingController();
-  final TextEditingController paymentDescriptionController =
-      TextEditingController();
+  final _db = DatabaseService();
+  late Future<List<LedgerEntry>> _ledger = _db.getLedger(widget.personId);
+  late Future<PersonRecord?> _person = _db.getPerson(widget.personId);
+  void _reload() { setState(() { _ledger = _db.getLedger(widget.personId); _person = _db.getPerson(widget.personId); }); }
 
-  @override
-  void dispose() {
-    itemController.dispose();
-    priceController.dispose();
-    paymentController.dispose();
-    paymentDescriptionController.dispose();
-    super.dispose();
-  }
-
-  // Add new due item to Firestore
-  Future<void> addDueItem() async {
-    final item = itemController.text.trim();
-    final price = double.tryParse(priceController.text.trim()) ?? 0;
-
-    if (item.isEmpty || price <= 0) return;
-
-    await _databaseService.addDueItem(widget.personId, item, price);
-
-    Navigator.pop(context);
-    itemController.clear();
-    priceController.clear();
-    setState(() {});
-  }
-
-  // Add payment to clear due
-  Future<void> addPayment() async {
-    final amount = double.tryParse(paymentController.text.trim()) ?? 0;
-    final description = paymentDescriptionController.text.trim();
-
-    // Get the net due amount
-    final dueItemsStream = _databaseService.getDueItemsStream(widget.personId);
-    final paymentsStream = _databaseService.getPaymentsStream(widget.personId);
-
-    final dueSnapshot = await dueItemsStream.first;
-    final paymentSnapshot = await paymentsStream.first;
-
-    double totalDueAmount = 0;
-    for (var item in dueSnapshot.docs) {
-      final data = item.data() as Map<String, dynamic>;
-      totalDueAmount += (data['price'] ?? 0).toDouble();
-    }
-
-    double totalPaidAmount = 0;
-    for (var payment in paymentSnapshot.docs) {
-      final data = payment.data() as Map<String, dynamic>;
-      totalPaidAmount += (data['amount'] ?? 0).toDouble();
-    }
-
-    final netDue = totalDueAmount - totalPaidAmount;
-
-    // Prevent payment if it exceeds the net due
-    if (amount <= 0 || amount > netDue) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Payment cannot exceed the due amount')),
-      );
-      return;
-    }
-
-    // Proceed with adding the payment to Firestore
-    await _databaseService.addPayment(widget.personId, amount, description);
-
-    Navigator.pop(context);
-    paymentController.clear();
-    paymentDescriptionController.clear();
-    setState(() {});
-  }
-
-  // Show payment dialog
-  void _showPaymentDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear Due'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: paymentController,
-              decoration: const InputDecoration(labelText: 'Amount to Clear'),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: paymentDescriptionController,
-              decoration: const InputDecoration(
-                labelText: 'Description (Optional)',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          MyButton(text: "Clear Due", onTap: addPayment),
-        ],
-      ),
-    );
+  Future<void> _showEntryDialog({required bool isPayment, required int balance}) async {
+    final label = TextEditingController();
+    final amount = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final result = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
+      title: Text(isPayment ? 'Record payment' : 'Add credit / sale'),
+      content: Form(key: formKey, child: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextFormField(controller: label, autofocus: true, textCapitalization: TextCapitalization.sentences, decoration: InputDecoration(labelText: isPayment ? 'Note (optional)' : 'Item or description'), validator: (value) => !isPayment && (value == null || value.trim().isEmpty) ? 'Enter an item description' : null),
+        TextFormField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Amount (PKR)', prefixText: 'Rs '), validator: (value) { final parsed = parsePaisa(value ?? ''); if (parsed == null) return 'Enter an amount greater than zero'; if (isPayment && parsed > balance) return 'Cannot exceed ${formatPkr(balance)}'; return null; }),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')), FilledButton(onPressed: () { if (formKey.currentState!.validate()) Navigator.pop(dialogContext, true); }, child: Text(isPayment ? 'Save payment' : 'Add to khata'))],
+    ));
+    if (result != true) { label.dispose(); amount.dispose(); return; }
+    try {
+      final paisa = parsePaisa(amount.text)!;
+      if (isPayment) {
+        await _db.addPayment(personId: widget.personId, amountPaisa: paisa, description: label.text);
+      } else {
+        await _db.addDueItem(personId: widget.personId, item: label.text, amountPaisa: paisa);
+      }
+      if (mounted) _reload();
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString().replaceFirst('Bad state: ', ''))));
+    } finally { label.dispose(); amount.dispose(); }
   }
 
   @override
-  Widget build(BuildContext context) {
-    final dueItemsStream = _databaseService.getDueItemsStream(widget.personId);
-    final paymentsStream = _databaseService.getPaymentsStream(widget.personId);
-
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.personName)),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: dueItemsStream,
-        builder: (context, dueSnapshot) {
-          if (dueSnapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final dueItems = dueSnapshot.data?.docs ?? [];
-
-          return StreamBuilder<QuerySnapshot>(
-            stream: paymentsStream,
-            builder: (context, paymentSnapshot) {
-              if (paymentSnapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              final payments = paymentSnapshot.data?.docs ?? [];
-
-              double totalDueAmount = 0;
-              for (var item in dueItems) {
-                final data = item.data() as Map<String, dynamic>;
-                totalDueAmount += (data['price'] ?? 0).toDouble();
-              }
-
-              double totalPaidAmount = 0;
-              for (var payment in payments) {
-                final data = payment.data() as Map<String, dynamic>;
-                totalPaidAmount += (data['amount'] ?? 0).toDouble();
-              }
-
-              final netDue = totalDueAmount - totalPaidAmount;
-
-              return Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
-                  children: [
-                    // Summary card
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: netDue > 0
-                            ? Colors.red.shade100
-                            : Colors.green.shade100,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Total Due: रू ${totalDueAmount.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Total Paid: रू ${totalPaidAmount.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Net Due: रू ${netDue.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: netDue > 0 ? Colors.red : Colors.green,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Clear Due button
-                    if (netDue > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: MyButton(
-                          text: "Clear Due",
-                          onTap: _showPaymentDialog,
-                        ),
-                      ),
-
-                    // Transactions list
-                    Expanded(
-                      child: ListView(
-                        children: [
-                          // Due Items
-                          if (dueItems.isNotEmpty) ...[
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 8),
-                              child: Text(
-                                "Due Items",
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            ...dueItems.map((item) {
-                              final data = item.data() as Map<String, dynamic>;
-                              final time = (data['time'] as Timestamp).toDate();
-
-                              return Card(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                elevation: 2,
-                                margin: const EdgeInsets.symmetric(vertical: 6),
-                                child: ListTile(
-                                  title: Text(data['item'] ?? ''),
-                                  subtitle: Text(
-                                    '${time.day}/${time.month}/${time.year} ${time.hour}:${time.minute.toString().padLeft(2, '0')}',
-                                  ),
-                                  trailing: Text(
-                                    'रू ${data['price'].toString()}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.red,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ],
-
-                          // Payments
-                          if (payments.isNotEmpty) ...[
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 8),
-                              child: Text(
-                                "Payments",
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green,
-                                ),
-                              ),
-                            ),
-                            ...payments.map((payment) {
-                              final data =
-                                  payment.data() as Map<String, dynamic>;
-                              final time = (data['time'] as Timestamp).toDate();
-                              final description =
-                                  data['description'] ?? 'Payment';
-
-                              return Card(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                elevation: 2,
-                                margin: const EdgeInsets.symmetric(vertical: 6),
-                                child: ListTile(
-                                  title: Text(description),
-                                  subtitle: Text(
-                                    '${time.day}/${time.month}/${time.year} ${time.hour}:${time.minute.toString().padLeft(2, '0')}',
-                                  ),
-                                  trailing: Text(
-                                    'रू ${data['amount'].toString()}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.green,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          ],
-
-                          if (dueItems.isEmpty && payments.isEmpty)
-                            const Center(child: Text('No transactions yet')),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Add Due Item'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  MyTextField(
-                    controller: itemController,
-                    hintText: 'Items Name',
-                    obscureText: false,
-                  ),
-                  TextField(
-                    controller: priceController,
-                    decoration: const InputDecoration(labelText: 'Price'),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Date & Time: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year} ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                MyButton(text: "Add", onTap: addDueItem),
-              ],
-            ),
-          );
-        },
-        child: const Icon(Icons.add),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.personName)),
+    body: FutureBuilder<PersonRecord?>(future: _person, builder: (context, personSnapshot) {
+      final person = personSnapshot.data;
+      if (personSnapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+      if (person == null) return const Center(child: Text('Customer not found.'));
+      return Column(children: [
+        Container(width: double.infinity, margin: const EdgeInsets.all(16), padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: const Color(0xFFE5F5EC), borderRadius: BorderRadius.circular(18)), child: Column(children: [Text(person.name, style: Theme.of(context).textTheme.titleLarge), const SizedBox(height: 8), Text(person.phone), const SizedBox(height: 16), const Text('CURRENT BALANCE', style: TextStyle(letterSpacing: 1, fontWeight: FontWeight.w600)), Text(formatPkr(person.balancePaisa), style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: person.balancePaisa > 0 ? Colors.red.shade700 : Colors.green.shade700))])),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Row(children: [Expanded(child: FilledButton.icon(onPressed: () => _showEntryDialog(isPayment: false, balance: person.balancePaisa), icon: const Icon(Icons.add_shopping_cart), label: const Text('Add credit'))), const SizedBox(width: 10), Expanded(child: OutlinedButton.icon(onPressed: person.balancePaisa > 0 ? () => _showEntryDialog(isPayment: true, balance: person.balancePaisa) : null, icon: const Icon(Icons.payments_outlined), label: const Text('Payment')))])),
+        const Padding(padding: EdgeInsets.fromLTRB(16, 20, 16, 8), child: Align(alignment: Alignment.centerLeft, child: Text('Transaction history', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))),
+        Expanded(child: FutureBuilder<List<LedgerEntry>>(future: _ledger, builder: (context, ledgerSnapshot) {
+          if (ledgerSnapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          final entries = ledgerSnapshot.data ?? [];
+          if (entries.isEmpty) return const Center(child: Text('No transactions yet. Add a credit or payment.'));
+          return RefreshIndicator(onRefresh: () async => _reload(), child: ListView.builder(itemCount: entries.length, itemBuilder: (context, index) {
+            final entry = entries[index];
+            final isDue = entry.type == 'due';
+            final date = entry.createdAt;
+            return ListTile(leading: CircleAvatar(backgroundColor: isDue ? Colors.red.shade50 : Colors.green.shade50, child: Icon(isDue ? Icons.arrow_upward : Icons.arrow_downward, color: isDue ? Colors.red : Colors.green)), title: Text(entry.label), subtitle: Text('${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}  ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}'), trailing: Text('${isDue ? '+' : '-'}${formatPkr(entry.amountPaisa)}', style: TextStyle(fontWeight: FontWeight.bold, color: isDue ? Colors.red.shade700 : Colors.green.shade700)));
+          }));
+        })),
+      ]);
+    }),
+  );
 }
